@@ -8,17 +8,22 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
-import android.support.annotation.IntDef;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
-import java.util.ArrayList;
+import com.bumptech.glide.Glide;
+
+import java.io.ByteArrayOutputStream;
 import java.util.LinkedList;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.OkHttpClient;
@@ -35,20 +40,25 @@ public class ChatService extends Service {
         @Override
         public boolean handleMessage(Message msg) {
             if (msg.what == 100) {
-                if (chatList.isEmpty()){
+                if (chatList.isEmpty()) {
                     sendNotification((String) msg.obj);
-                }else {
+                } else {
                     for (OnChatListener chatListener : chatList) {
                         chatListener.onChatMessage((String) msg.obj);
                     }
                 }
                 return true;
+            }else if (msg.what==200){
+                for (OnChatListener chatListener : chatList) {
+                    chatListener.onChatMessage((ByteString) msg.obj);
+                }
             }
             return false;
         }
     });
     private final OkHttpClient client;
-    private Thread thread;
+//    private Thread thread;
+    private ExecutorService service;
 
     public ChatService() {
         client = new OkHttpClient.Builder()
@@ -56,32 +66,29 @@ public class ChatService extends Service {
                 .build();
     }
 
-    private void sendNotification(String message){
+    private void sendNotification(String message) {
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this);
         builder.setDefaults(Notification.DEFAULT_ALL);
         builder.setContentText(message);
         builder.setContentTitle("你有新的未读消息");
         builder.setWhen(System.currentTimeMillis());
         builder.setSmallIcon(R.mipmap.ic_launcher);
-        Intent intent = new Intent(this,MainActivity.class);
+        Intent intent = new Intent(this, MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-//        Intent intent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-        PendingIntent pendingIntent = PendingIntent.getActivity(this,100,intent,PendingIntent.FLAG_ONE_SHOT);
-
-       builder.setFullScreenIntent(pendingIntent,false);
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 100, intent, PendingIntent.FLAG_CANCEL_CURRENT);
+        builder.setContentIntent(pendingIntent);
+        builder.setAutoCancel(true);
         builder.setPriority(NotificationCompat.PRIORITY_MAX);
         builder.setCategory(NotificationCompat.CATEGORY_MESSAGE);
         Notification build = builder.build();
-
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        manager.notify((int) System.currentTimeMillis(),build);
+        manager.notify((int) System.currentTimeMillis(), build);
 
     }
 
     @Override
     public IBinder onBind(Intent intent) {
-        // TODO: Return the communication channel to the service.
         throw new UnsupportedOperationException("Not yet implemented");
     }
 
@@ -97,8 +104,8 @@ public class ChatService extends Service {
     public void onCreate() {
         super.onCreate();
         LocalBroadcastManager.getInstance(this).registerReceiver(receiver, new IntentFilter("ChatMessage"));
-        thread = new Thread(runnable);
-        thread.start();
+        service = Executors.newFixedThreadPool(8);
+        service.submit(runnable);
     }
 
 
@@ -106,7 +113,8 @@ public class ChatService extends Service {
     public void onDestroy() {
         super.onDestroy();
         LocalBroadcastManager.getInstance(this).unregisterReceiver(receiver);
-        thread.interrupt();
+        chatList.clear();
+        service.shutdown();
     }
 
     private static LinkedList<OnChatListener> chatList = new LinkedList<>();
@@ -122,10 +130,35 @@ public class ChatService extends Service {
 
     BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override
-        public void onReceive(Context context, Intent intent) {
+        public void onReceive(Context context, final Intent intent) {
 
-            String chatMessage = intent.getStringExtra("chatMessage");
-            webSocket.send(chatMessage);
+            if ("img".equals(intent.getAction())){
+                service.submit(new Runnable() {
+                    @Override
+                    public void run() {
+
+                    }
+                });
+            }else {
+                service.submit(new Runnable() {
+                    @Override
+                    public void run() {
+                        String chatMessage = intent.getStringExtra("chatMessage");
+                        if ("img".equals(chatMessage)){
+                            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                            BitmapFactory.decodeResource(getResources(),R.mipmap.ic_launcher).compress(Bitmap.CompressFormat.PNG,100,bos);
+                            webSocket.send(ByteString.of(bos.toByteArray()));
+                        }else {
+
+
+                        }
+                        webSocket.send(chatMessage);
+                    }
+                });
+            }
+
+
+
         }
     };
 
@@ -148,6 +181,9 @@ public class ChatService extends Service {
                 @Override
                 public void onMessage(WebSocket webSocket, ByteString bytes) {
                     Log.d(TAG, "onMessage() called with: webSocket = [" + webSocket + "], bytes = [" + bytes + "]");
+                    bytes.asByteBuffer().array();
+                    handler.sendMessage(handler.obtainMessage(200,bytes));
+
                 }
 
                 @Override
@@ -157,11 +193,13 @@ public class ChatService extends Service {
 
                 @Override
                 public void onClosed(WebSocket webSocket, int code, String reason) {
+                    stopSelf();
                     Log.d(TAG, "onClosed() called with: webSocket = [" + webSocket + "], code = [" + code + "], reason = [" + reason + "]");
                 }
 
                 @Override
                 public void onFailure(WebSocket webSocket, Throwable t, Response response) {
+                    stopSelf();
                     Log.d(TAG, "onFailure() called with: webSocket = [" + webSocket + "], t = [" + t + "], response = [" + response + "]");
                 }
             });

@@ -16,7 +16,11 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.example.shff.chatdemo.bean.ChatMessage;
+
 import java.util.ArrayList;
+
+import okio.ByteString;
 
 public class MainActivity extends AppCompatActivity {
     OnChatListener onChatListener = new OnChatListener() {
@@ -26,8 +30,13 @@ public class MainActivity extends AppCompatActivity {
             adapter.notifyDataSetChanged();
 
         }
+
+        @Override
+        public void onChatMessage(ByteString byteString) {
+
+        }
     };
-    ArrayList<String> chatList = new ArrayList<>();
+    ArrayList<ChatMessage> chatList = new ArrayList<>();
     private ChatAdapter adapter;
 
     @Override
