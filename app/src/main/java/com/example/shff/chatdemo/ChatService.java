@@ -4,28 +4,27 @@ import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.support.v4.app.NotificationCompat;
-import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
-import com.bumptech.glide.Glide;
+import com.example.shff.chatdemo.bean.ChatMessage;
+import com.google.gson.GsonBuilder;
 
 import java.io.ByteArrayOutputStream;
 import java.util.LinkedList;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -34,6 +33,12 @@ import okhttp3.WebSocketListener;
 import okio.ByteString;
 
 public class ChatService extends Service {
+    public class ChatBinder extends Binder {
+        public ChatService getService(){
+            return ChatService.this;
+        }
+
+    }
 
     private WebSocket webSocket;
     Handler handler = new Handler(new Handler.Callback() {
@@ -44,11 +49,13 @@ public class ChatService extends Service {
                     sendNotification((String) msg.obj);
                 } else {
                     for (OnChatListener chatListener : chatList) {
-                        chatListener.onChatMessage((String) msg.obj);
+                        ChatMessage chatMessage = new ChatMessage();
+                        chatMessage.message = (String) msg.obj;
+                        chatListener.onChatMessage(chatMessage);
                     }
                 }
                 return true;
-            }else if (msg.what==200){
+            } else if (msg.what == 200) {
                 for (OnChatListener chatListener : chatList) {
                     chatListener.onChatMessage((ByteString) msg.obj);
                 }
@@ -57,7 +64,6 @@ public class ChatService extends Service {
         }
     });
     private final OkHttpClient client;
-//    private Thread thread;
     private ExecutorService service;
 
     public ChatService() {
@@ -89,7 +95,12 @@ public class ChatService extends Service {
 
     @Override
     public IBinder onBind(Intent intent) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        return new ChatBinder();
+    }
+
+    @Override
+    public boolean onUnbind(Intent intent) {
+        return super.onUnbind(intent);
     }
 
     @Override
@@ -103,7 +114,6 @@ public class ChatService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        LocalBroadcastManager.getInstance(this).registerReceiver(receiver, new IntentFilter("ChatMessage"));
         service = Executors.newFixedThreadPool(8);
         service.submit(runnable);
     }
@@ -112,60 +122,55 @@ public class ChatService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(receiver);
         chatList.clear();
         service.shutdown();
     }
 
-    private static LinkedList<OnChatListener> chatList = new LinkedList<>();
+    private  LinkedList<OnChatListener> chatList = new LinkedList<>();
 
 
-    public static void addChatListener(OnChatListener onChatListener) {
+    public  void addChatListener(OnChatListener onChatListener) {
         chatList.add(onChatListener);
     }
 
-    public static void removeChatListener(OnChatListener onChatListener) {
+    public  void removeChatListener(OnChatListener onChatListener) {
         chatList.remove(onChatListener);
     }
 
-    BroadcastReceiver receiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, final Intent intent) {
+    public void sendMessage(final String message){
 
-            if ("img".equals(intent.getAction())){
-                service.submit(new Runnable() {
-                    @Override
-                    public void run() {
-
+            service.submit(new Runnable() {
+                @Override
+                public void run() {
+                    if ("img".equals(message)) {
+                        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                        BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher).compress(Bitmap.CompressFormat.PNG, 100, bos);
+                        webSocket.send(ByteString.of(bos.toByteArray()));
+                    } else {
+                        ChatMessage chatMessage = new ChatMessage();
+                        chatMessage.from = "android";
+                        chatMessage.to= "java";
+                        chatMessage.message = message;
+                        webSocket.send(new GsonBuilder().create().toJson(chatMessage));
                     }
-                });
-            }else {
-                service.submit(new Runnable() {
-                    @Override
-                    public void run() {
-                        String chatMessage = intent.getStringExtra("chatMessage");
-                        if ("img".equals(chatMessage)){
-                            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                            BitmapFactory.decodeResource(getResources(),R.mipmap.ic_launcher).compress(Bitmap.CompressFormat.PNG,100,bos);
-                            webSocket.send(ByteString.of(bos.toByteArray()));
-                        }else {
 
+                }
+            });
 
-                        }
-                        webSocket.send(chatMessage);
-                    }
-                });
-            }
+    }
 
-
-
-        }
-    };
 
     Runnable runnable = new Runnable() {
         @Override
         public void run() {
-            Request request = new Request.Builder().url("http://192.168.4.45:8080/echo").build();
+            HttpUrl url = new HttpUrl.Builder()
+                    .scheme("http")
+                    .host("192.168.4.45")
+                    .port(8080)
+                    .encodedPath("/echo")
+                    .addQueryParameter("userId", "android")
+                    .build();
+            Request request = new Request.Builder().url(url).build();
             webSocket = client.newWebSocket(request, new WebSocketListener() {
                 @Override
                 public void onMessage(WebSocket webSocket, String text) {
@@ -182,7 +187,7 @@ public class ChatService extends Service {
                 public void onMessage(WebSocket webSocket, ByteString bytes) {
                     Log.d(TAG, "onMessage() called with: webSocket = [" + webSocket + "], bytes = [" + bytes + "]");
                     bytes.asByteBuffer().array();
-                    handler.sendMessage(handler.obtainMessage(200,bytes));
+                    handler.sendMessage(handler.obtainMessage(200, bytes));
 
                 }
 

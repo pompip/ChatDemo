@@ -1,5 +1,7 @@
 package com.example.shff.chatdemo;
 
+import com.example.shff.chatdemo.bean.ChatMessage;
+
 import okio.ByteString;
 
 /**
@@ -7,6 +9,6 @@ import okio.ByteString;
  */
 
 public interface OnChatListener {
-    void onChatMessage(String message);
+    void onChatMessage(ChatMessage message);
     void onChatMessage(ByteString byteString);
 }

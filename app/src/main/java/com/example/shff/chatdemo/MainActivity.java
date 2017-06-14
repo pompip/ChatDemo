@@ -1,10 +1,12 @@
 package com.example.shff.chatdemo;
 
+import android.app.Service;
+import android.content.ComponentName;
 import android.content.Intent;
-import android.security.keystore.KeyInfo;
-import android.support.v4.content.LocalBroadcastManager;
-import android.support.v7.app.AppCompatActivity;
+import android.content.ServiceConnection;
 import android.os.Bundle;
+import android.os.IBinder;
+import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.DividerItemDecoration;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
@@ -25,7 +27,7 @@ import okio.ByteString;
 public class MainActivity extends AppCompatActivity {
     OnChatListener onChatListener = new OnChatListener() {
         @Override
-        public void onChatMessage(String message) {
+        public void onChatMessage(ChatMessage message) {
             chatList.add(message);
             adapter.notifyDataSetChanged();
 
@@ -38,6 +40,8 @@ public class MainActivity extends AppCompatActivity {
     };
     ArrayList<ChatMessage> chatList = new ArrayList<>();
     private ChatAdapter adapter;
+    private ServiceConnection conn;
+    private ChatService chatService;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,7 +69,8 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void onBindViewHolder(ChatHolder holder, int position) {
-            holder.chat_text.setText(chatList.get(position));
+            ChatMessage chatMessage = chatList.get(position);
+            holder.chat_text.setText(chatMessage.message);
 
         }
 
@@ -91,11 +96,8 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
                 if (actionId == EditorInfo.IME_ACTION_SEND){
-                    Intent intent = new Intent("ChatMessage");
-                    intent.putExtra("chatMessage",edit.getText().toString());
-                    LocalBroadcastManager.getInstance(MainActivity.this).sendBroadcast(intent);
+                    chatService.sendMessage(edit.getText().toString());
                     Toast.makeText(MainActivity.this, "send", Toast.LENGTH_SHORT).show();
-
                     return true;
                 }
                 return false;
@@ -111,18 +113,34 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-//        stopService(new Intent(this,ChatService.class));
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        ChatService.addChatListener(onChatListener);
+        Intent intent = new Intent(this, ChatService.class);
+        conn = new ServiceConnection() {
+            @Override
+            public void onServiceConnected(ComponentName name, IBinder service) {
+                if (service instanceof ChatService.ChatBinder) {
+                    chatService = ((ChatService.ChatBinder) service).getService();
+                    chatService.addChatListener(onChatListener);
+                }
+            }
+
+            @Override
+            public void onServiceDisconnected(ComponentName name) {
+                chatService.removeChatListener(onChatListener);
+            }
+        };
+        bindService(intent, conn, Service.BIND_AUTO_CREATE);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        ChatService.removeChatListener(onChatListener);
+        unbindService(conn);
     }
+
+
 }
